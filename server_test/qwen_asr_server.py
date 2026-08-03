@@ -21,7 +21,7 @@ from datetime import datetime
 HOST = "0.0.0.0"
 PORT = 8765
 
-DASHSCOPE_KEY = "Bearer sk-ws-H.ELMELIM.ZQ87.MEYCIQCptvbT7d5ZMMcv-uzI5QosapyNUmFiTyoeIBwr74T0VwIhAIopxZMrSrHF7MRXVWL8lr6qSrFDxG6Urdt9cGa8ul-2"
+DASHSCOPE_KEY = "Bearer sk-ws-H.ELRHLIY.YaVi.MEUCIAHZwnqd-6_semqc0QRGaQL2gDLr5Qx87nfqqFPNmg36AiEAv6BY1buNryi0UReao71mO9QtGjA11o1BrJ4bunW6u3M"
 DASHSCOPE_URL = "wss://dashscope.aliyuncs.com/api-ws/v1/realtime?model=qwen3.5-omni-plus-realtime"
 
 MIN_SEGMENT_SEC = 0.5
