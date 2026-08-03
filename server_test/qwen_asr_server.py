@@ -1,6 +1,7 @@
 """
 Qwen Omni Realtime 透明中继服务器
 ESP32 → 本地 :8765 → Qwen DashScope
+APP  → 本地 :8766（实时推送识别/翻译结果）
 
 用法:
     python qwen_asr_server.py                  # 默认自动检测语言
@@ -82,6 +83,59 @@ def parse_args():
 parse_args()
 
 stats = {"connections": 0, "recognitions": 0, "audio_bytes": 0}
+
+
+# ======================== APP 端 WebSocket 推送 ========================
+# 把识别结果实时推送给手机 APP，APP 端连接 ws://<电脑IP>:8766
+APP_WS_PORT = 8766
+app_clients = set()           # 当前连着的 APP 客户端
+_broadcast_tasks = set()      # 持有引用，防止 create_task 被 GC
+
+
+def _ts():
+    """毫秒时间戳"""
+    return int(datetime.now().timestamp() * 1000)
+
+
+async def _safe_send(ws, msg):
+    """向单个 APP 发送；失败则将其从客户端集合移除"""
+    try:
+        await ws.send(msg)
+    except Exception:
+        app_clients.discard(ws)
+
+
+def schedule_broadcast(payload: dict):
+    """非阻塞地把消息广播给所有 APP 客户端（慢客户端不会阻塞解析）"""
+    if not app_clients:
+        return
+    msg = json.dumps(payload, ensure_ascii=False)
+    for ws in list(app_clients):
+        task = asyncio.create_task(_safe_send(ws, msg))
+        _broadcast_tasks.add(task)
+        task.add_done_callback(_broadcast_tasks.discard)
+
+
+async def handle_app(app_ws):
+    """APP 客户端：注册、发送 hello、保持连接"""
+    app_clients.add(app_ws)
+    addr = app_ws.remote_address
+    print(f"\n[{datetime.now().strftime('%H:%M:%S')}] 📱 APP 已连接: {addr} (共{len(app_clients)}个)")
+    try:
+        await app_ws.send(json.dumps({
+            "type": "hello",
+            "server": "qwen-asr-relay",
+            "lang": CURRENT_LANG,
+            "ts": _ts(),
+        }, ensure_ascii=False))
+        # 保持连接，忽略 APP 发来的任何消息
+        async for _ in app_ws:
+            pass
+    except websockets.exceptions.ConnectionClosed:
+        pass
+    finally:
+        app_clients.discard(app_ws)
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] 📱 APP 断开: {addr} (剩{len(app_clients)}个)")
 
 
 def save_wav(filename: str, pcm_data: bytes):
@@ -199,9 +253,11 @@ async def handle_audio(esp32_ws):
 
                     elif etype == "input_audio_buffer.speech_started":
                         print(f"  🎤 语音开始")
+                        schedule_broadcast({"type": "speech_start", "ts": _ts()})
 
                     elif etype == "input_audio_buffer.speech_stopped":
                         print(f"  🤚 语音结束")
+                        schedule_broadcast({"type": "speech_end", "ts": _ts()})
 
                     elif etype == "input_audio_buffer.committed":
                         print(f"  📦 音频已提交")
@@ -212,10 +268,12 @@ async def handle_audio(esp32_ws):
                     elif etype == "conversation.item.input_audio_transcription.delta":
                         delta = evt.get("delta", "")
                         print(f"  🔤 原文: {delta}", end="", flush=True)
+                        schedule_broadcast({"type": "asr_delta", "text": delta, "lang": CURRENT_LANG, "ts": _ts()})
 
                     elif etype == "conversation.item.input_audio_transcription.completed":
                         transcript = evt.get("transcript", "")
                         print(f"\n  ✅ 原文: {transcript}")
+                        schedule_broadcast({"type": "asr_final", "text": transcript, "lang": CURRENT_LANG, "ts": _ts()})
                         if transcript.strip():
                             stats["recognitions"] += 1
                             with open(LOG_FILE, "a", encoding="utf-8") as f:
@@ -225,6 +283,7 @@ async def handle_audio(esp32_ws):
                     elif etype == "response.text.delta":
                         delta = evt.get("delta", "")
                         print(f"  💬 中文: {delta}", end="", flush=True)
+                        schedule_broadcast({"type": "translation_delta", "text": delta, "ts": _ts()})
 
                     elif etype == "response.done":
                         print()
@@ -274,17 +333,22 @@ async def main():
     lang_name = LANGUAGES.get(CURRENT_LANG, "?")
     print("=" * 55)
     print("  千问 Qwen Omni 实时语音翻译中继")
-    print(f"  监听: ws://{HOST}:{PORT}/audio")
-    print(f"  中继到: {DASHSCOPE_URL}")
-    print(f"  语言: {CURRENT_LANG} ({lang_name}) → 中文翻译")
-    print(f"  日志: {LOG_FILE}")
+    print(f"  ESP32 监听:  ws://{HOST}:{PORT}")
+    print(f"  APP  监听:  ws://{HOST}:{APP_WS_PORT}")
+    print(f"  中继到:      {DASHSCOPE_URL}")
+    print(f"  语言:        {CURRENT_LANG} ({lang_name}) → 中文翻译")
+    print(f"  日志:        {LOG_FILE}")
     print("=" * 55)
-    print(f"\n  ✅ 等待 ESP32 连接...\n")
+    print(f"\n  ✅ 等待 ESP32 + APP 连接...\n")
 
     async with websockets.serve(
         handle_audio, HOST, PORT,
         max_size=10 * 1024 * 1024,
         ping_interval=None,
+        close_timeout=5,
+    ), websockets.serve(
+        handle_app, HOST, APP_WS_PORT,
+        ping_interval=20,
         close_timeout=5,
     ):
         await asyncio.Future()
