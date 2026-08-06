@@ -1,229 +1,104 @@
-| Supported Targets | ESP32 | ESP32-C3 | ESP32-C5 | ESP32-C6 | ESP32-C61 | ESP32-H2 | ESP32-P4 | ESP32-S3 |
-| ----------------- | ----- | -------- | -------- | -------- | --------- | -------- | -------- | -------- |
+# ESP32 + Qwen3.5 实时语音翻译（Arduino 版）
 
-# I2S Basic PDM Mode Example
+ESP32 + PDM 麦克风 → **直连阿里云 DashScope** → 十国语言实时译汉，无需任何中继服务器。
 
-(See the README.md file in the upper level 'examples' directory for more information about examples.)
+## 功能
 
-This example is going to show how to use the PDM TX and RX mode.
+- 🎤 PDM 麦克风实时采集 16kHz PCM 音频
+- 🔒 自实现 WebSocket Secure 客户端（不依赖第三方 WebSocket 库）
+- 🌍 十国语言 → 简体中文翻译（中/英/日/韩/法/德/俄/西/阿/葡）
+- 📝 同时输出原文转写 + 中文翻译
+- 🩺 内置网络诊断（SNTP 时间同步 / TCP / TLS / WS 握手检测）
 
-## How to Use Example
+## 硬件
 
-### Hardware Required
+| 元件 | 型号示例 | 说明 |
+|------|---------|------|
+| 主控 | ESP32 DevKit | 需支持 2.4G WiFi |
+| 麦克风 | PDM 数字麦克风（如 SPH0641LU4H-1） | I2S 接口 |
 
-#### General
+### 接线
 
-* A development board with any supported Espressif SOC chip (see `Supported Targets` table above)
-* A USB cable for power supply and programming
+| PDM 麦克风 | ESP32 引脚 |
+|-----------|-----------|
+| VDD | 3.3V |
+| GND | GND |
+| CLK | GPIO4 |
+| DATA | GPIO5 |
 
-#### PDM RX
+> 引脚可在 `qwen_realtime_arduino.ino` 顶部的 `I2S_*` 宏修改。
 
-* For non-ESP32-S3 SoC, a PDM microphone whose `sel` pin is supposed to be pulled down, and connecting its `clk` pin to `EXAMPLE_PDM_RX_CLK_IO`, `data` pin to `EXAMPLE_PDM_RX_DIN_IO`.
+## 软件依赖
 
-```
-┌───────────────────────┐               ┌──────────────────┐
-│          ESP          │               │   PDM microphone │
-│                       │   PDM clock   │                  │
-│ EXAMPLE_PDM_RX_CLK_IO ├──────────────►│ CLK              │
-│                       │   PDM data    │                  │
-│ EXAMPLE_PDM_RX_DIN_IO │◄──────────────┤ DATA             │
-│                       │               │                  │
-│                       │         ┌─────┤ SEL              │
-│                       │         │     │                  │
-│                   GND ├─────────┴─────┤ GND              │
-│                       │               │                  │
-│                   VCC ├───────────────┤ VCC              │
-└───────────────────────┘               └──────────────────┘
-```
+- **Arduino IDE** + **arduino-esp32 核心**（已测试 2.0.17）
+- 无需额外库——仅使用核心自带的 `WiFi.h` / `WiFiClientSecure.h` / `driver/i2s.h`
 
-* For ESP32-S3 SoC, this example shows how to support 8 PDM microphones, in this case, the connection can be:
+## 配置
 
-```
-┌──────────────────┐                        ┌─────────────────────────┐                        ┌──────────────────┐
-│  PDM microphone3 │                        │            ESP          │                        │  PDM microphone1 │
-│                  │      PDM clock         │                         │          PDM clock     │                  │
-│             CLK  │◄───┬───────────────────┤  EXAMPLE_PDM_RX_CLK_IO  ├───────────────────┬───►│ CLK              │
-│                  │    │                   │                         │                   │    │                  │
-│             DATA ├────┼────┐              │  EXAMPLE_PDM_RX_DIN_IO  │◄─────────────┬────┼────┤ DATA             │
-│                  │    │    │              │                         │              │    │    │                  │
-│             SEL  ├────┼────┼─────────┐    │                         │    ┌─────────┼────┼────┤ SEL              │
-│                  │    │    │         │    │                         │    │         │    │    │                  │
-│             GND  ├────┼────┼────┐    │    │                         │    │    ┌────┼────┼────┤ GND              │
-│                  │    │    │    │    │    │                         │    │    │    │    │    │                  │
-│             VCC  ├────┼────┼────┼────┤    │                         │    ├────┼────┼────┼────┤ VCC              │
-└──────────────────┘    │    │    │    │    │                         │    │    │    │    │    └──────────────────┘
-                        │    │    │    │    │                         │    │    │    │    │
-┌──────────────────┐    │    │    │    │    │                         │    │    │    │    │    ┌──────────────────┐
-│  PDM microphone4 │    │    │    │    │    │                         │    │    │    │    │    │  PDM microphone2 │
-│                  │    │    │    │    │    │                         │    │    │    │    │    │                  │
-│             CLK  │◄───┤    │    │    │    │                         │    │    │    │    ├───►│ CLK              │
-│                  │    │    │    │    │    │                         │    │    │    │    │    │                  │
-│             DATA ├────┼────┴────┼────┼───►│ EXAMPLE_PDM_RX_DIN1_IO  │    │    │    └────┼────┤ DATA             │
-│                  │    │         │    │    │                         │    │    │         │    │                  │
-│             SEL  ├────┼─────────┤    │    │                         │    │    ├─────────┼────┤ SEL              │
-│                  │    │         │    │    │                         │    │    │         │    │                  │
-│             GND  ├────┼─────────┤    │    │                         │    │    ├─────────┼────┤ GND              │
-│                  │    │         │    │    │                         │    │    │         │    │                  │
-│             VCC  ├────┼─────────┼────┤    │                         │    ├────┼─────────┼────┤ VCC              │
-└──────────────────┘    │         │    │    │                         │    │    │         │    └──────────────────┘
-                        │         │    │    │                         │    │    │         │
-┌──────────────────┐    │         │    │    │                         │    │    │         │    ┌──────────────────┐
-│  PDM microphone7 │    │         │    │    │                         │    │    │         │    │  PDM microphone5 │
-│                  │    │         │    │    │                         │    │    │         │    │                  │
-│             CLK  │◄───┤         │    │    │                         │    │    │         ├───►│ CLK              │
-│                  │    │         │    │    │                         │    │    │         │    │                  │
-│             DATA ├────┼────┐    │    │    │ EXAMPLE_PDM_RX_DIN2_IO  │◄───┼────┼────┬────┼────┤ DATA             │
-│                  │    │    │    │    │    │                         │    │    │    │    │    │                  │
-│             SEL  ├────┼────┼────┼────┤    │                         │    ├────┼────┼────┼────┤ SEL              │
-│                  │    │    │    │    │    │                         │    │    │    │    │    │                  │
-│             GND  ├────┼────┼────┤    │    │                         │    │    ├────┼────┼────┤ GND              │
-│                  │    │    │    │    │    │                         │    │    │    │    │    │                  │
-│             VCC  ├────┼────┼────┼────┤    │                         │    ├────┼────┼────┼────┤ VCC              │
-└──────────────────┘    │    │    │    │    │                         │    │    │    │    │    └──────────────────┘
-                        │    │    │    │    │                         │    │    │    │    │
-┌──────────────────┐    │    │    │    │    │                         │    │    │    │    │    ┌──────────────────┐
-│  PDM microphone8 │    │    │    │    │    │                         │    │    │    │    │    │  PDM microphone6 │
-│                  │    │    │    │    │    │                         │    │    │    │    │    │                  │
-│             CLK  │◄───┘    │    │    │    │                         │    │    │    │    └───►│ CLK              │
-│                  │         │    │    │    │                         │    │    │    │         │                  │
-│             DATA ├─────────┴────┼────┼───►│ EXAMPLE_PDM_RX_DIN3_IO  │    │    │    └─────────┤ DATA             │
-│                  │              │    │    │                         │    │    │              │                  │
-│             SEL  ├──────────────┤    │    │                         │    │    ├──────────────┤ SEL              │
-│                  │              │    │    │                         │    │    │              │                  │
-│             GND  ├──────────────┴────┼────┤           GND           ├────┼────┴──────────────┤ GND              │
-│                  │                   │    │                         │    │                   │                  │
-│             VCC  ├───────────────────┴────┤           VCC           ├────┴───────────────────┤ VCC              │
-└──────────────────┘                        └─────────────────────────┘                        └──────────────────┘
+打开 `qwen_realtime_arduino/qwen_realtime_arduino.ino`，修改顶部配置区：
+
+```cpp
+#define WIFI_SSID        "你的WiFi"
+#define WIFI_PASSWORD    "你的密码"
+#define DASHSCOPE_API_KEY "sk-你的DashScope密钥"
+#define DASHSCOPE_HOST   "dashscope.aliyuncs.com"
+#define DASHSCOPE_PORT   443
+#define DASHSCOPE_PATH   "/api-ws/v1/realtime?model=qwen3.5-omni-plus-realtime"
 ```
 
-#### PDM TX
+> DashScope API Key 在 [阿里云控制台 - DashScope](https://dashscope.console.aliyun.com/) 申请。
 
-* An earphone or a speaker
-* An audio power amplifier that can input PDM signal. If the power amplifier can only receive the analog signal without PDM clock (i.e. DAC line mode, otherwise codec line mode), a low-pass passive or active filter is required to restore the PDM data wave into analog signal, before it is transmitted to the power amplifier.
+## 烧录
 
-**MAX98358 (codec case)**
+1. 用 Arduino IDE 打开 `qwen_realtime_arduino/qwen_realtime_arduino.ino`
+2. 选对开发板（如 **ESP32 Dev Module**）和端口
+3. 点击上传
+4. 打开串口监视器，波特率 **115200**
 
-Please refer to the [Datasheet of MAX98358](https://datasheets.maximintegrated.com/en/ds/MAX98358.pdf) for more details.
-
-```
-┌────────────────────────┐               ┌───────────────┐
-│          ESP           │               │   MAX 98358   │
-│                        │   PDM clock   │               │
-│  EXAMPLE_PDM_TX_CLK_IO ├──────────────►│ CLK           │   ┌─────────┐
-│                        │   PDM data    │               │   │ Speaker │
-│ EXAMPLE_PDM_TX_DOUT_IO ├──────────────►│ DATA     OUTP ├───┤         │
-│                        │               │               │   │         │
-│                        │         ┌─────┤ SD_MODE  OUTN ├───┤         │
-│                        │         │     │               │   │         │
-│                    VCC ├─────────┴─────┤ VCC           │   └─────────┘
-│                        │               │               │
-│                    GND ├───────────────┤ GND           │
-└────────────────────────┘               └───────────────┘
-```
-
-**NS4150 (dac case)**
-
-Please refer to the NS4150 datasheet for more details.
+## 串口输出示例
 
 ```
-┌────────────────────────┐                              ┌───────────────┐
-│          ESP           │                              │    NS 4150    │
-│                        │                              │               │
-│  EXAMPLE_PDM_TX_CLK_IO │(No need to connect)          │ INN           │   ┌─────────┐
-│                        │PDM data┌────────────────┐    │               │   │ Speaker │
-│ EXAMPLE_PDM_TX_DOUT_IO ├────────┤ Low-pass Filter├───►│ INP       VoP ├───┤         │
-│                        │        └────────────────┘    │               │   │         │
-│                        │                          ┌───┤ CTRL      VoN ├───┤         │
-│                        │                          │   │               │   │         │
-│                    VCC ├──────────────────────────┴───┤ VCC           │   └─────────┘
-│                        │                              │               │
-│                    GND ├──────────────────────────────┤ GND           │
-└────────────────────────┘                              └───────────────┘
+===========================================
+  ESP32 Qwen3.5 十国语言译汉 (自实现WSS)
+  PDM Mic → WSS → DashScope (直连，无需服务器)
+===========================================
+[WiFi] Connecting......
+[WiFi] Connected! IP: 192.168.137.197
+[Net] ✅ Time synced
+[Net] ✅ TCP 443 reachable
+[Net] ✅ TLS handshake OK
+[WSS] ✅ WebSocket connected (101)
+[WSS] → session.update sent
+[WSS] ✅ Session ready — audio streaming enabled
+[WSS] 🎤 speech started
+📝 原文: Hello everyone
+🇨🇳 各位好
+✅ 中文: 各位好
 ```
 
-### Configure the Project
-
-PDM can only works in simplex mode, you can select the PDM direction in the menu config, or just setting the macro `EXAMPLE_PDM_DIR` directly. Setting it to `EXAMPLE_PDM_TX` or `EXAMPLE_PDM_RX` can choose the PDM direction of this example. But currently ESP32-C3 does not support PDM RX mode.
-
-### Build and Flash
-
-Build the project and flash it to the board, then run monitor tool to view serial output:
+## 工作原理
 
 ```
-idf.py -p PORT build flash monitor
+PDM 麦克风 ──I2S──→ ESP32 ──WSS(443)──→ DashScope Qwen3.5-Omni
+                        │                     │
+                        │              ┌──────┴──────┐
+                        │              │             │
+                  原文转写事件    中文翻译事件
+              (input_audio_transcription) (response.text)
+                        │             │
+                        └──────┬──────┘
+                          串口输出
 ```
 
-(To exit the serial monitor, type ``Ctrl-]``.)
+1. ESP32 采集 PDM 音频 → PCM 16kHz
+2. 通过自实现 WebSocket 客户端加密推送到 DashScope
+3. 服务端 VAD 自动检测语音起止
+4. ASR 引擎输出原文转写，LLM 生成中文翻译
+5. 两路结果实时回传串口打印
 
-See the Getting Started Guide for full steps to configure and use ESP-IDF to build projects.
+## 支持语言
 
-## Example Output
-
-### PDM TX
-
-While `EXAMPLE_PDM_DIR` is set to `EXAMPLE_PDM_TX`, then you can see the following log:
-
-```
-I2S PDM TX example start
----------------------------
-D (284) i2s_common: tx channel is registered on I2S0 successfully
-D (294) i2s_common: DMA malloc info: dma_desc_num = 6, dma_desc_buf_size = dma_frame_num * slot_num * data_bit_width = 500
-D (304) i2s_pdm: Clock division info: [sclk] 160000000 Hz [mdiv] 3 [mclk] 49152000 Hz [bdiv] 8 [bclk] 6144000 Hz
-D (314) i2s_pdm: The tx channel on I2S0 has been initialized to PDM TX mode successfully
-D (324) i2s_common: i2s tx channel enabled
-Playing bass `twinkle twinkle little star`
-Playing alto `twinkle twinkle little star`
-Playing treble `twinkle twinkle little star`
-...
-```
-
-You can hear the audio 'twinkle twinkle little star' in three tones if you connect a speaker to it.
-
-### PDM RX
-
-While `EXAMPLE_PDM_DIR` is set to `EXAMPLE_PDM_RX`, but without connecting a PDM microphone, then you can see the following log:
-
-```
-I2S PDM RX example start
----------------------------
-D (10) i2s_common: rx channel is registered on I2S0 successfully
-D (10) i2s_common: DMA malloc info: dma_desc_num = 6, dma_desc_buf_size = dma_frame_num * slot_num * data_bit_width = 500
-D (20) i2s_common: i2s rx channel enabled
-Read Task: i2s read 2048 bytes
------------------------------------
-[0] -6595 [1] 0 [2] -29199 [3] -32768
-[4] -30203 [5] -32156 [6] -30704 [7] -31348
-
-Read Task: i2s read 2048 bytes
------------------------------------
-[0] -30935 [1] -30935 [2] -30935 [3] -30935
-[4] -30935 [5] -30935 [6] -30935 [7] -30935
-
-Read Task: i2s read 2048 bytes
------------------------------------
-[0] -30935 [1] -30935 [2] -30935 [3] -30935
-[4] -30935 [5] -30935 [6] -30935 [7] -30935
-```
-
-And only if you connect a PDM microphone, you can see the data changes:
-
-```
-I2S PDM RX example start
----------------------------
-D (10) i2s_common: rx channel is registered on I2S0 successfully
-D (10) i2s_common: DMA malloc info: dma_desc_num = 6, dma_desc_buf_size = dma_frame_num * slot_num * data_bit_width = 500
-D (20) i2s_common: i2s rx channel enabled
-Read Task: i2s read 2048 bytes
------------------------------------
-[0] -3181 [1] 0 [2] -7194 [3] -24288
-[4] -777 [5] 3650 [6] 109 [7] 571
-
-Read Task: i2s read 2048 bytes
------------------------------------
-[0] 2391 [1] 2378 [2] 2397 [3] 2385
-[4] 2399 [5] 2375 [6] 2401 [7] 2389
-```
-
-## Troubleshooting
-
-For any technical queries, please open an [issue](https://github.com/espressif/esp-idf/issues) on GitHub. We will get back to you soon.
+| 语种 | → 输出 |
+|------|--------|
+| 中文 | 原样输出 |
+| English / 日本語 / 한국어 / Français / Deutsch / Русский / Español / العربية / Português | → 简体中文 |

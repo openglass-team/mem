@@ -1,31 +1,20 @@
-# ESP-IDF build output
-build/
-managed_components/
-dependencies.lock
-
-# Local SDK config (contains API keys / WiFi creds)
-sdkconfig
-sdkconfig.old
-sdkconfig.bak
+# Arduino build output
+/build/
+*.elf
+*.bin
+*.hex
 
 # IDE
 .vscode/
 .clangd
 .cache/
 
-# Audio recordings & logs (large / runtime artifacts)
+# Audio recordings & logs (runtime artifacts)
 *.wav
 *.opus
 *.mp3
 *.pcm
-asr_log.txt
 *.log
-
-# Python
-__pycache__/
-*.pyc
-.venv/
-venv/
 
 # OS
 .DS_Store
