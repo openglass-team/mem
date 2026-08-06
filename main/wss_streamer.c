@@ -1,15 +1,14 @@
 /*
  * Qwen Omni Realtime — event-driven WebSocket protocol.
- * Model: qwen3.5-omni-plus-realtime (10-language → Chinese translation)
+ * Model: qwen3.5-omni-plus-realtime (10-language meeting transcription)
  *
  * Protocol:
- *   1. WS connected → send session.update (translate to Chinese)
+ *   1. WS connected → send session.update (transcribe only, no translation)
  *   2. Wait for session.updated → ready to send audio
  *   3. Send audio via input_audio_buffer.append (base64 PCM)
  *   4. Server VAD auto-detects speech start/stop
  *   5. Receive transcription.delta (real-time ASR in original language 🔤)
  *   6. Receive transcription.completed (final ASR in original language ✅)
- *   7. Receive response.text.delta (Chinese translation 💬)
  */
 
 #include <stdlib.h>
@@ -24,6 +23,7 @@
 #include "sdkconfig.h"
 #include "esp_websocket_client.h"
 #include "cloud_uploader.h"
+#include "bone_speaker.h"
 #include "wss_streamer.h"
 
 static const char *TAG = "wss_streamer";
@@ -97,10 +97,8 @@ static void wss_evt(void *a, esp_event_base_t b, int32_t id, void *d) {
                 "\"type\":\"session.update\","
                 "\"session\":{"
                 "\"modalities\":[\"text\"],"
-                "\"voice\":\"Tina\","
                 "\"input_audio_format\":\"pcm\","
-                "\"output_audio_format\":\"pcm\","
-                "\"instructions\":\"You are a real-time speech translator. You can understand speech in Chinese, English, Japanese, Korean, French, German, Spanish, Russian, Arabic, and Portuguese. Translate everything the user says into Simplified Chinese (简体中文). Only output the Chinese translation, nothing else. Do not add explanations or notes.\","
+                "\"instructions\":\"You are a real-time meeting transcription assistant. Accurately transcribe everything the user says in the original language. Do not translate. Do not summarize. Do not add explanations or notes.\","
                 "\"turn_detection\":{"
                 "\"type\":\"server_vad\","
                 "\"threshold\":0.5,"
@@ -180,26 +178,12 @@ static void wss_evt(void *a, esp_event_base_t b, int32_t id, void *d) {
                 }
             }
 
-            /* Model response text delta 💬 (Chinese translation) */
-            else if (strstr(raw, "\"response.text.delta\"")) {
-                int tl = 0;
-                const char *txt = json_val(raw, len, "delta", &tl);
-                if (txt && tl > 0 && tl < 256) {
-                    asr_result_t ar;
-                    ar.type = RESULT_RESPONSE;
-                    memcpy(ar.text, txt, tl); ar.text[tl] = 0;
-                    xQueueSend(s_recv_queue, &ar, 0);
-                    ESP_LOGI(TAG, "💬 中文: \"%s\"", ar.text);
-                }
-            }
-
             /* Errors */
             else if (strstr(raw, "\"error\"")) {
                 ESP_LOGE(TAG, "Qwen error: %.*s", len < 300 ? len : 300, raw);
             }
         } else if (e->op_code == 0x02 && e->data_len > 0) {
-            /* Binary response (PCM audio from model) */
-            ESP_LOGI(TAG, "Binary audio: %d bytes", e->data_len);
+            /* Binary audio disabled — meeting transcription mode (text only) */
         }
         break;
     }

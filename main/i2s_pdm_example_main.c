@@ -3,12 +3,13 @@
  *
  * SPDX-License-Identifier: Unlicense OR CC0-1.0
  *
- * I2S PDM Microphone → WebSocket Cloud Streaming (Translation Mode)
+ * I2S PDM Microphone → WebSocket Cloud Streaming (Real-Time Meeting Transcription)
  *
  * Pipeline:
  *   PDM Mic → I2S RX → Stream Buffer → Send Queue → WSS → Cloud (Qwen Omni)
+ *   Qwen Omni: ASR transcription → original language text
  *   Server-side VAD handles speech detection (no local VAD needed)
- *   Recognized speech in any language → translated to Chinese (简体中文)
+ *   Recognized speech in any language → transcribed to text (meeting notes)
  */
 
 #include <stdint.h>
@@ -24,6 +25,7 @@
 #include "wifi_sta.h"
 #include "opus_encoder.h"
 #include "wss_streamer.h"
+#include "bone_speaker.h"
 
 static const char *TAG = "app_main";
 
@@ -81,11 +83,12 @@ static void pcm_stream_task(void *pvParameters)
 void app_main(void)
 {
     ESP_LOGI(TAG, "========================================");
-    ESP_LOGI(TAG, "PDM Mic -> Opus -> WebSocket Streaming");
+    ESP_LOGI(TAG, "PDM Mic -> Opus -> WSS -> Qwen Omni");
+    ESP_LOGI(TAG, "Real-Time Meeting Transcription");
     ESP_LOGI(TAG, "========================================");
 
     /* Step 1: Connect Wi-Fi */
-    ESP_LOGI(TAG, "[1/5] Connecting Wi-Fi...");
+    ESP_LOGI(TAG, "[1/6] Connecting Wi-Fi...");
     wifi_init_sta();
     if (!wifi_is_connected()) {
         ESP_LOGE(TAG, "Wi-Fi connection failed. Aborting.");
@@ -93,16 +96,20 @@ void app_main(void)
     }
 
     /* Step 2: Initialize I2S PDM microphone (stream buffer) */
-    ESP_LOGI(TAG, "[2/5] Initializing I2S PDM microphone...");
+    ESP_LOGI(TAG, "[2/6] Initializing I2S PDM microphone...");
     i2s_mic_init();
 
     /* Step 3: Initialize Opus encoder */
-    ESP_LOGI(TAG, "[3/5] Initializing Opus encoder...");
+    ESP_LOGI(TAG, "[3/6] Initializing Opus encoder...");
     audio_opus_encoder_init();
 
     /* Step 4: Initialize WebSocket client */
-    ESP_LOGI(TAG, "[4/5] Connecting WebSocket...");
+    ESP_LOGI(TAG, "[4/6] Connecting WebSocket...");
     wss_streamer_init();
+
+    /* Step 5: Initialize bone conduction speaker (output queue) */
+    ESP_LOGI(TAG, "[5/6] Initializing bone conduction speaker...");
+    bone_speaker_init();
 
     /* Wait a moment for WSS to establish */
     int wait_count = 0;
@@ -114,8 +121,8 @@ void app_main(void)
         ESP_LOGW(TAG, "WebSocket not connected yet, will retry in background");
     }
 
-    /* Step 5: Start processing pipeline */
-    ESP_LOGI(TAG, "[5/5] Starting audio pipeline tasks...");
+    /* Step 6: Start processing pipeline */
+    ESP_LOGI(TAG, "[6/6] Starting audio pipeline tasks...");
 
     /* Task A: WSS sender (consumes the send queue) */
     xTaskCreate(wss_streamer_send_task, "wss_sender", 16384, NULL, 5, NULL);
@@ -126,8 +133,11 @@ void app_main(void)
     /* Task C: I2S PDM microphone reader (highest priority to avoid DMA overflow) */
     xTaskCreate(i2s_mic_start_read, "i2s_mic_read", 4096, NULL, 8, NULL);
 
-    ESP_LOGI(TAG, "Audio streaming pipeline started!");
-    ESP_LOGI(TAG, "Speak into the microphone to send Opus audio to: %s", CONFIG_WSS_URL);
+    /* Task D: Bone conduction speaker playback (I2S1 TX → MAX98357A) */
+    xTaskCreate(bone_speaker_play_task, "bone_play", 8192, NULL, 4, NULL);
+
+    ESP_LOGI(TAG, "Meeting transcription pipeline started! (mic → WSS → Qwen → text)");
+    ESP_LOGI(TAG, "Speak into the microphone — transcription displayed in real-time");
 
     /* Main task: monitor status. ASR results are uploaded to cloud automatically
      * by wss_event_handler when final transcription is received. */
@@ -146,17 +156,14 @@ void app_main(void)
             case WSS_RESULT_ASR_FINAL:
                 ESP_LOGI(TAG, "✅ 原文: \"%s\"", asr_buf);
                 break;
-            case WSS_RESULT_RESPONSE:
-                ESP_LOGI(TAG, "💬 中文翻译: \"%s\"", asr_buf);
-                break;
             }
         }
 
         /* Heartbeat every 10 seconds */
         static int tick = 0;
         if (++tick % 100 == 0) {
-            ESP_LOGI(TAG, "Heartbeat: Wi-Fi=%d, WSS=%d",
-                     wifi_is_connected(), wss_is_connected());
+            ESP_LOGI(TAG, "Heartbeat: Wi-Fi=%d, WSS=%d, Bone=%d",
+                     wifi_is_connected(), wss_is_connected(), bone_speaker_is_active());
         }
     }
 }

@@ -1,7 +1,7 @@
 """
 Qwen Omni Realtime 透明中继服务器
 ESP32 → 本地 :8765 → Qwen DashScope
-APP  → 本地 :8766（实时推送识别/翻译结果）
+APP  → 本地 :8766（实时推送识别结果）
 
 用法:
     python qwen_asr_server.py                  # 默认自动检测语言
@@ -22,7 +22,7 @@ from datetime import datetime
 HOST = "0.0.0.0"
 PORT = 8765
 
-DASHSCOPE_KEY = "Bearer sk-ws-H.ELRHLIY.YaVi.MEUCIAHZwnqd-6_semqc0QRGaQL2gDLr5Qx87nfqqFPNmg36AiEAv6BY1buNryi0UReao71mO9QtGjA11o1BrJ4bunW6u3M"
+DASHSCOPE_KEY = "Bearer sk-ws-H.ELPPXMP.PDbb.MEYCIQDfaw7gLMBQshrmVyhm5yA6XSd9EJQ_Hnz98lpRSWtELQIhAOot_RJNycDzhtL_rFSRYu2tH5GDAOYFBrCQwJ6onSZ8"
 DASHSCOPE_URL = "wss://dashscope.aliyuncs.com/api-ws/v1/realtime?model=qwen3.5-omni-plus-realtime"
 
 MIN_SEGMENT_SEC = 0.5
@@ -43,19 +43,19 @@ LANGUAGES = {
     "pt":   "Português",
 }
 
-# 各语言的 instructions 提示 — 翻译模式：把用户说的话翻译成中文
+# 各语言的 instructions 提示 — 会议记录模式：准确转写原文，不翻译
 LANG_INSTRUCTIONS = {
-    "auto": "You are a real-time speech translator. You can understand speech in Chinese, English, Japanese, Korean, French, German, Spanish, Russian, Arabic, and Portuguese. Translate everything the user says into Simplified Chinese (简体中文). Only output the Chinese translation, nothing else. Do not add explanations or notes.",
-    "zh":   "你是实时语音翻译助手。请将用户说的每一句话翻译成简体中文。只输出中文翻译，不要添加任何解释或说明。如果用户说的是中文，原样输出。",
-    "en":   "You are a real-time speech translator. Translate everything the user says from English into Simplified Chinese (简体中文). Only output the Chinese translation, nothing else. Do not add explanations or notes.",
-    "ja":   "You are a real-time speech translator. Translate everything the user says from Japanese into Simplified Chinese (简体中文). Only output the Chinese translation, nothing else. Do not add explanations or notes.",
-    "ko":   "You are a real-time speech translator. Translate everything the user says from Korean into Simplified Chinese (简体中文). Only output the Chinese translation, nothing else. Do not add explanations or notes.",
-    "fr":   "You are a real-time speech translator. Translate everything the user says from French into Simplified Chinese (简体中文). Only output the Chinese translation, nothing else. Do not add explanations or notes.",
-    "de":   "You are a real-time speech translator. Translate everything the user says from German into Simplified Chinese (简体中文). Only output the Chinese translation, nothing else. Do not add explanations or notes.",
-    "es":   "You are a real-time speech translator. Translate everything the user says from Spanish into Simplified Chinese (简体中文). Only output the Chinese translation, nothing else. Do not add explanations or notes.",
-    "ru":   "You are a real-time speech translator. Translate everything the user says from Russian into Simplified Chinese (简体中文). Only output the Chinese translation, nothing else. Do not add explanations or notes.",
-    "ar":   "You are a real-time speech translator. Translate everything the user says from Arabic into Simplified Chinese (简体中文). Only output the Chinese translation, nothing else. Do not add explanations or notes.",
-    "pt":   "You are a real-time speech translator. Translate everything the user says from Portuguese into Simplified Chinese (简体中文). Only output the Chinese translation, nothing else. Do not add explanations or notes.",
+    "auto": "You are a real-time meeting transcription assistant. Accurately transcribe everything the user says in the original language. Do not translate. Do not summarize. Do not add explanations or notes.",
+    "zh":   "你是实时会议记录助手。请准确转写用户说的每一句话，保留原始语言，不要翻译，不要总结，不要添加任何解释或说明。",
+    "en":   "You are a real-time meeting transcription assistant. Accurately transcribe everything the user says in English. Do not translate. Do not summarize. Do not add explanations or notes.",
+    "ja":   "You are a real-time meeting transcription assistant. Accurately transcribe everything the user says in Japanese. Do not translate. Do not summarize. Do not add explanations or notes.",
+    "ko":   "You are a real-time meeting transcription assistant. Accurately transcribe everything the user says in Korean. Do not translate. Do not summarize. Do not add explanations or notes.",
+    "fr":   "You are a real-time meeting transcription assistant. Accurately transcribe everything the user says in French. Do not translate. Do not summarize. Do not add explanations or notes.",
+    "de":   "You are a real-time meeting transcription assistant. Accurately transcribe everything the user says in German. Do not translate. Do not summarize. Do not add explanations or notes.",
+    "es":   "You are a real-time meeting transcription assistant. Accurately transcribe everything the user says in Spanish. Do not translate. Do not summarize. Do not add explanations or notes.",
+    "ru":   "You are a real-time meeting transcription assistant. Accurately transcribe everything the user says in Russian. Do not translate. Do not summarize. Do not add explanations or notes.",
+    "ar":   "You are a real-time meeting transcription assistant. Accurately transcribe everything the user says in Arabic. Do not translate. Do not summarize. Do not add explanations or notes.",
+    "pt":   "You are a real-time meeting transcription assistant. Accurately transcribe everything the user says in Portuguese. Do not translate. Do not summarize. Do not add explanations or notes.",
 }
 
 CURRENT_LANG = "auto"
@@ -263,7 +263,7 @@ async def handle_audio(esp32_ws):
                         print(f"  📦 音频已提交")
 
                     elif etype == "response.created":
-                        print(f"  ⏳ 开始生成响应")
+                        pass  # 会议记录模式：忽略模型回复
 
                     elif etype == "conversation.item.input_audio_transcription.delta":
                         delta = evt.get("delta", "")
@@ -281,12 +281,10 @@ async def handle_audio(esp32_ws):
                                         f"[{CURRENT_LANG}] {transcript}\n")
 
                     elif etype == "response.text.delta":
-                        delta = evt.get("delta", "")
-                        print(f"  💬 中文: {delta}", end="", flush=True)
-                        schedule_broadcast({"type": "translation_delta", "text": delta, "ts": _ts()})
+                        pass  # 会议记录模式：忽略模型回复（翻译已移除）
 
                     elif etype == "response.done":
-                        print()
+                        pass  # 会议记录模式：忽略模型回复
 
                     elif etype == "error":
                         err = evt.get("error", {})
@@ -332,11 +330,11 @@ async def handle_audio(esp32_ws):
 async def main():
     lang_name = LANGUAGES.get(CURRENT_LANG, "?")
     print("=" * 55)
-    print("  千问 Qwen Omni 实时语音翻译中继")
+    print("  千问 Qwen Omni 实时会议记录中继")
     print(f"  ESP32 监听:  ws://{HOST}:{PORT}")
     print(f"  APP  监听:  ws://{HOST}:{APP_WS_PORT}")
     print(f"  中继到:      {DASHSCOPE_URL}")
-    print(f"  语言:        {CURRENT_LANG} ({lang_name}) → 中文翻译")
+    print(f"  语言:        {CURRENT_LANG} ({lang_name})（会议记录）")
     print(f"  日志:        {LOG_FILE}")
     print("=" * 55)
     print(f"\n  ✅ 等待 ESP32 + APP 连接...\n")
